@@ -1,0 +1,12 @@
+repository: https://github.com/americanhodl/bitcoin-boogie
+description: dodge red candles in order to acquire precious bitcoins
+summary: stack sats or die trying
+tags:
+    - game
+    - bitcoin
+    - runner
+    - arcade
+license: MIT
+website: https://github.com/americanhodl/bitcoin-boogie
+metadata_sources:
+    - github
