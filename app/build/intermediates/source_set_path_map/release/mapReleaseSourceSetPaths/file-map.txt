@@ -1,0 +1,10 @@
+com.bitcoinboogie.app-webkit-1.8.0-0 /Users/tom./.gradle/caches/8.13/transforms/2b79905c42032e6be2cbc498e3e583d5/transformed/webkit-1.8.0/res
+com.bitcoinboogie.app-core-1.1.0-1 /Users/tom./.gradle/caches/8.13/transforms/7220f0a331b816731ed3fe93a397481d/transformed/core-1.1.0/res
+com.bitcoinboogie.app-pngs-2 /Users/tom./Desktop/bitcoin-boogie-android/app/build/generated/res/pngs/release
+com.bitcoinboogie.app-resValues-3 /Users/tom./Desktop/bitcoin-boogie-android/app/build/generated/res/resValues/release
+com.bitcoinboogie.app-updated_navigation_xml-4 /Users/tom./Desktop/bitcoin-boogie-android/app/build/generated/updated_navigation_xml/release
+com.bitcoinboogie.app-packageReleaseResources-5 /Users/tom./Desktop/bitcoin-boogie-android/app/build/intermediates/incremental/release/packageReleaseResources/merged.dir
+com.bitcoinboogie.app-packageReleaseResources-6 /Users/tom./Desktop/bitcoin-boogie-android/app/build/intermediates/incremental/release/packageReleaseResources/stripped.dir
+com.bitcoinboogie.app-release-7 /Users/tom./Desktop/bitcoin-boogie-android/app/build/intermediates/merged_res/release/mergeReleaseResources
+com.bitcoinboogie.app-main-8 /Users/tom./Desktop/bitcoin-boogie-android/app/src/main/res
+com.bitcoinboogie.app-release-9 /Users/tom./Desktop/bitcoin-boogie-android/app/src/release/res

@@ -1,0 +1,55 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.bitcoinboogie.app"
+4    android:versionCode="1"
+5    android:versionName="1.0.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="34" />
+10
+11    <application
+11-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:5:5-25:19
+12        android:allowBackup="true"
+12-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:6:9-35
+13        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+13-->[androidx.core:core:1.1.0] /Users/tom./.gradle/caches/8.13/transforms/7220f0a331b816731ed3fe93a397481d/transformed/core-1.1.0/AndroidManifest.xml:24:18-86
+14        android:extractNativeLibs="false"
+15        android:hardwareAccelerated="true"
+15-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:12:9-43
+16        android:icon="@mipmap/ic_launcher"
+16-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:7:9-43
+17        android:label="@string/app_name"
+17-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:8:9-41
+18        android:roundIcon="@mipmap/ic_launcher_round"
+18-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:9:9-54
+19        android:supportsRtl="true"
+19-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:10:9-35
+20        android:theme="@style/AppTheme" >
+20-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:11:9-40
+21        <activity
+21-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:14:9-24:20
+22            android:name="com.bitcoinboogie.app.MainActivity"
+22-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:15:13-41
+23            android:configChanges="orientation|screenSize|keyboardHidden"
+23-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:17:13-74
+24            android:exported="true"
+24-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:16:13-36
+25            android:launchMode="singleTask"
+25-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:19:13-44
+26            android:screenOrientation="portrait" >
+26-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:18:13-49
+27            <intent-filter>
+27-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:20:13-23:29
+28                <action android:name="android.intent.action.MAIN" />
+28-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:21:17-69
+28-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:21:25-66
+29
+30                <category android:name="android.intent.category.LAUNCHER" />
+30-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:22:17-77
+30-->/Users/tom./Desktop/bitcoin-boogie-android/app/src/main/AndroidManifest.xml:22:27-74
+31            </intent-filter>
+32        </activity>
+33    </application>
+34
+35</manifest>

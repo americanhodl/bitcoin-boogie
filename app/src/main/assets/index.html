@@ -1,0 +1,2063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Bitcoin Boogie</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #08080e;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+    font-family: 'Rajdhani', sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
+
+// --- Sizing ---
+let W, H, LANE_W, GROUND_Y, LANE_X, DPR;
+function resize() {
+  DPR = window.devicePixelRatio || 1;
+  const maxW = 480, maxH = 780;
+  const ratio = maxW / maxH;
+  if (window.innerWidth / window.innerHeight > ratio) {
+    H = Math.min(window.innerHeight, maxH);
+    W = H * ratio;
+  } else {
+    W = Math.min(window.innerWidth, maxW);
+    H = W / ratio;
+  }
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  GROUND_Y = H * 0.78;
+  LANE_W = W / 5;
+  LANE_X = [W * 0.2, W * 0.5, W * 0.8];
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- Audio Engine ---
+let audioCtx = null;
+let audioStarted = false;
+let musicPlaying = false;
+let musicGain = null;
+let musicTimeout = null;
+
+function initAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = 0.18;
+    musicGain.connect(audioCtx.destination);
+    audioStarted = true;
+  } catch(e) {
+    audioCtx = null;
+  }
+}
+
+function ensureAudio() {
+  try {
+    if (!audioCtx) initAudio();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  } catch(e) {}
+}
+
+// --- SFX ---
+function playTone(freq, duration, type, vol, detune) {
+  try {
+    if (!audioCtx || !sfxEnabled) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.value = freq;
+    if (detune) osc.detune.value = detune;
+    const v = (vol || 0.15) * sfxVolume;
+    gain.gain.setValueAtTime(v, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch(e) {}
+}
+
+function sfxCoinCollect() {
+  try {
+    if (!audioCtx || !sfxEnabled) return;
+    const t = audioCtx.currentTime;
+    [880, 1108, 1320, 1760].forEach((f, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.value = f;
+      gain.gain.setValueAtTime(0.12 * sfxVolume, t + i * 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.04 + 0.12);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t + i * 0.04);
+      osc.stop(t + i * 0.04 + 0.12);
+    });
+  } catch(e) {}
+}
+
+function sfxDeath() {
+  try {
+    if (!audioCtx || !sfxEnabled) return;
+    const t = audioCtx.currentTime;
+    [440, 370, 294, 220, 165, 110].forEach((f, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = f;
+      gain.gain.setValueAtTime(0.2 * sfxVolume, t + i * 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.15);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t + i * 0.06);
+      osc.stop(t + i * 0.06 + 0.15);
+    });
+    const bufferSize = audioCtx.sampleRate * 0.3;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+    const noise = audioCtx.createBufferSource();
+    const noiseGain = audioCtx.createGain();
+    noise.buffer = buffer;
+    noiseGain.gain.setValueAtTime(0.15 * sfxVolume, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    noise.connect(noiseGain);
+    noiseGain.connect(audioCtx.destination);
+    noise.start(t);
+  } catch(e) {}
+}
+
+function sfxMenuSelect() {
+  try {
+    if (!audioCtx || !sfxEnabled) return;
+    playTone(660, 0.08, 'square', 0.1);
+    setTimeout(() => playTone(880, 0.12, 'square', 0.12), 60);
+  } catch(e) {}
+}
+
+function sfxLaneSwitch() {
+  try {
+    if (!audioCtx || !sfxEnabled) return;
+    playTone(520, 0.05, 'square', 0.06);
+  } catch(e) {}
+}
+
+function sfxJump() {
+  try {
+    if (!audioCtx || !sfxEnabled) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(250, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.1 * sfxVolume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.15);
+  } catch(e) {}
+}
+
+// --- Music Engine ---
+// Intense fast-paced chiptune - procedurally generated
+const TEMPO = 160; // BPM
+const BEAT = 60 / TEMPO;
+const BAR = BEAT * 4;
+
+// Minor key progression for intensity
+const bassPattern = [
+  // Each entry: [note freq, duration in beats]
+  [110, 1], [110, 0.5], [110, 0.5], [130.81, 1], [146.83, 1],
+  [110, 1], [110, 0.5], [110, 0.5], [146.83, 1], [130.81, 1],
+  [87.31, 1], [87.31, 0.5], [87.31, 0.5], [110, 1], [130.81, 1],
+  [98, 1], [98, 0.5], [110, 0.5], [130.81, 1], [110, 1],
+];
+
+const melodyPattern = [
+  // Intense driving melody
+  [440, 0.25], [0, 0.25], [440, 0.25], [523.25, 0.25],
+  [587.33, 0.5], [523.25, 0.25], [440, 0.25],
+  [392, 0.5], [440, 0.25], [0, 0.25],
+  [523.25, 0.25], [587.33, 0.25], [523.25, 0.25], [440, 0.25],
+  [392, 0.5], [349.23, 0.5],
+  [330, 0.25], [0, 0.25], [330, 0.25], [392, 0.25],
+  [440, 0.5], [523.25, 0.25], [440, 0.25],
+  [392, 0.25], [349.23, 0.25], [330, 0.5],
+  [349.23, 0.25], [392, 0.25], [440, 0.5],
+];
+
+const arpPattern = [
+  [220, 0.125], [330, 0.125], [440, 0.125], [330, 0.125],
+  [261.63, 0.125], [392, 0.125], [523.25, 0.125], [392, 0.125],
+  [293.66, 0.125], [440, 0.125], [587.33, 0.125], [440, 0.125],
+  [261.63, 0.125], [392, 0.125], [523.25, 0.125], [392, 0.125],
+];
+
+function scheduleNote(freq, startTime, duration, type, vol, dest) {
+  if (freq === 0) return; // rest
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  const endTime = startTime + duration * 0.9;
+  gain.gain.setValueAtTime(vol, startTime);
+  gain.gain.setValueAtTime(vol, endTime - 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001, endTime);
+  osc.connect(gain);
+  gain.connect(dest);
+  osc.start(startTime);
+  osc.stop(endTime + 0.05);
+}
+
+function scheduleDrum(startTime, dest) {
+  // Kick
+  const kick = audioCtx.createOscillator();
+  const kickGain = audioCtx.createGain();
+  kick.type = 'sine';
+  kick.frequency.setValueAtTime(150, startTime);
+  kick.frequency.exponentialRampToValueAtTime(40, startTime + 0.1);
+  kickGain.gain.setValueAtTime(0.3, startTime);
+  kickGain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.12);
+  kick.connect(kickGain);
+  kickGain.connect(dest);
+  kick.start(startTime);
+  kick.stop(startTime + 0.15);
+}
+
+function scheduleHihat(startTime, dest, open) {
+  const bufLen = audioCtx.sampleRate * (open ? 0.1 : 0.04);
+  const buf = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < bufLen; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / bufLen);
+  const src = audioCtx.createBufferSource();
+  const gain = audioCtx.createGain();
+  src.buffer = buf;
+  gain.gain.setValueAtTime(open ? 0.08 : 0.06, startTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, startTime + (open ? 0.1 : 0.04));
+  src.connect(gain);
+  gain.connect(dest);
+  src.start(startTime);
+}
+
+let musicBarIndex = 0;
+function scheduleBar() {
+  if (!musicPlaying || !audioCtx) return;
+  try {
+    const t = audioCtx.currentTime + 0.05;
+
+  // Bass line
+  let bassTime = t;
+  const bassStart = (musicBarIndex * 5) % bassPattern.length;
+  for (let i = 0; i < 5 && bassStart + i < bassPattern.length; i++) {
+    const [freq, dur] = bassPattern[bassStart + i];
+    scheduleNote(freq, bassTime, dur * BEAT, 'sawtooth', 0.12, musicGain);
+    bassTime += dur * BEAT;
+  }
+
+  // Melody (every other bar for variation)
+  if (musicBarIndex % 2 === 0) {
+    let melTime = t;
+    const melStart = (musicBarIndex * 4) % melodyPattern.length;
+    for (let i = 0; i < 8 && melStart + i < melodyPattern.length; i++) {
+      const [freq, dur] = melodyPattern[melStart + i];
+      scheduleNote(freq, melTime, dur * BEAT, 'square', 0.07, musicGain);
+      melTime += dur * BEAT;
+    }
+  } else {
+    // Arpeggio on alternate bars
+    let arpTime = t;
+    const arpStart = (musicBarIndex * 4) % arpPattern.length;
+    for (let i = 0; i < 16 && arpStart + i < arpPattern.length; i++) {
+      const [freq, dur] = arpPattern[(arpStart + i) % arpPattern.length];
+      scheduleNote(freq, arpTime, dur * BEAT, 'square', 0.05, musicGain);
+      arpTime += dur * BEAT;
+    }
+  }
+
+  // Drums - kick on 1 and 3, hihat on every 8th
+  for (let b = 0; b < 4; b++) {
+    if (b === 0 || b === 2) scheduleDrum(t + b * BEAT, musicGain);
+    for (let s = 0; s < 2; s++) {
+      scheduleHihat(t + b * BEAT + s * BEAT * 0.5, musicGain, s === 1 && b === 3);
+    }
+  }
+
+  musicBarIndex++;
+  musicTimeout = setTimeout(scheduleBar, BAR * 1000 * 0.85);
+  } catch(e) {}
+}
+
+function startMusic() {
+  try {
+    if (!audioCtx || musicPlaying || !musicEnabled) return;
+    musicPlaying = true;
+    musicBarIndex = 0;
+    musicGain.gain.value = musicVolume;
+    scheduleBar();
+  } catch(e) {}
+}
+
+function stopMusic() {
+  try {
+    musicPlaying = false;
+    if (musicTimeout) clearTimeout(musicTimeout);
+    if (musicGain && audioCtx) {
+      musicGain.gain.setValueAtTime(musicGain.gain.value, audioCtx.currentTime);
+      musicGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+    }
+  } catch(e) {}
+}
+
+// --- Game State ---
+const STATE = { MENU: 0, PLAY: 1, DEAD: 2, SETTINGS: 3 };
+let state = STATE.MENU;
+let score, coins, speed, speedMul, frameCount, obstacles, bitcoins, particles, shakeTimer, flashTimer;
+let highScore = 0;
+
+// Audio settings
+let musicEnabled = true;
+let sfxEnabled = true;
+let musicVolume = 0.18;
+let sfxVolume = 0.8; // multiplier for all SFX
+let settingsSliderDrag = null; // which slider is being dragged
+
+// Player
+const player = { lane: 1, x: 0, y: 0, vy: 0, jumping: false, ducking: false, runFrame: 0, runTimer: 0, deadTimer: 0 };
+const JUMP_VEL = -12;
+const GRAVITY = 0.55;
+const PLAYER_W = 34, PLAYER_H = 52;
+const DUCK_H = 30;
+
+function initGame() {
+  score = 0; coins = 0; speed = 4.5; speedMul = 1; frameCount = 0;
+  obstacles = []; bitcoins = []; particles = [];
+  shakeTimer = 0; flashTimer = 0;
+  player.lane = 1; player.vy = 0; player.jumping = false; player.ducking = false;
+  player.runFrame = 0; player.runTimer = 0; player.deadTimer = 0; player.started = false;
+  player.x = LANE_X[1]; player.y = GROUND_Y;
+}
+
+// --- Drawing helpers ---
+function drawRoundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// --- Draw hoodie guy (HD) ---
+function drawPlayer(px, py, duck, runPhase, dead) {
+  ctx.save();
+  ctx.translate(px, py);
+  const h = duck ? DUCK_H : PLAYER_H;
+  const bounce = dead ? 0 : Math.sin(runPhase * Math.PI * 2) * 2.5;
+  const lean = dead ? 15 : Math.sin(runPhase * Math.PI * 2) * 3;
+
+  ctx.rotate(lean * Math.PI / 180);
+
+  if (dead) {
+    ctx.globalAlpha = Math.max(0, 1 - player.deadTimer / 60);
+  }
+
+  // Ground shadow
+  const shadowPulse = 0.9 + Math.sin(runPhase * Math.PI * 2) * 0.1;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(0, 3, 18 * shadowPulse, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const bodyY = -h + bounce;
+
+  // Legs with knees
+  const legSwing = dead ? 0 : Math.sin(runPhase * Math.PI * 2) * 8;
+  const kneePhase = dead ? 0 : Math.abs(Math.sin(runPhase * Math.PI * 2)) * 4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Left leg - thigh + shin
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(-6, bodyY + h - 14);
+  ctx.quadraticCurveTo(-6 - legSwing * 0.5, bodyY + h - 7 - kneePhase, -5 - legSwing, bodyY + h - 1);
+  ctx.stroke();
+  // Shin highlight
+  ctx.strokeStyle = 'rgba(40,40,70,0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-5, bodyY + h - 12);
+  ctx.quadraticCurveTo(-5 - legSwing * 0.5, bodyY + h - 7 - kneePhase, -4 - legSwing, bodyY + h - 1);
+  ctx.stroke();
+
+  // Right leg
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(6, bodyY + h - 14);
+  ctx.quadraticCurveTo(6 + legSwing * 0.5, bodyY + h - 7 - kneePhase, 5 + legSwing, bodyY + h - 1);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(40,40,70,0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(5, bodyY + h - 12);
+  ctx.quadraticCurveTo(5 + legSwing * 0.5, bodyY + h - 7 - kneePhase, 4 + legSwing, bodyY + h - 1);
+  ctx.stroke();
+
+  // Shoes - rounded with sole
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.ellipse(-5 - legSwing, bodyY + h, 6, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ff6600';
+  ctx.beginPath();
+  ctx.ellipse(-5 - legSwing, bodyY + h - 1, 5.5, 2.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Shoe stripe
+  ctx.strokeStyle = '#ff9933';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(-8 - legSwing, bodyY + h - 1);
+  ctx.lineTo(-2 - legSwing, bodyY + h - 1);
+  ctx.stroke();
+
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.ellipse(5 + legSwing, bodyY + h, 6, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ff6600';
+  ctx.beginPath();
+  ctx.ellipse(5 + legSwing, bodyY + h - 1, 5.5, 2.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#ff9933';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(2 + legSwing, bodyY + h - 1);
+  ctx.lineTo(8 + legSwing, bodyY + h - 1);
+  ctx.stroke();
+
+  if (!duck) {
+    // Body (hoodie) with better shading
+    const bodyGrad = ctx.createLinearGradient(-14, bodyY + 14, 14, bodyY + h - 10);
+    bodyGrad.addColorStop(0, '#33335a');
+    bodyGrad.addColorStop(0.4, '#2d2d4a');
+    bodyGrad.addColorStop(1, '#1a1a30');
+    ctx.fillStyle = bodyGrad;
+    drawRoundRect(-14, bodyY + 14, 28, h - 26, 6);
+    ctx.fill();
+
+    // Hoodie center line
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(0, bodyY + 16);
+    ctx.lineTo(0, bodyY + h - 14);
+    ctx.stroke();
+
+    // Hoodie pocket
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    drawRoundRect(-10, bodyY + 28, 20, 8, 3);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 0.5;
+    drawRoundRect(-10, bodyY + 28, 20, 8, 3);
+    ctx.stroke();
+
+    // Hoodie drawstrings
+    ctx.strokeStyle = 'rgba(200,200,255,0.12)';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(-3, bodyY + 16);
+    ctx.lineTo(-4, bodyY + 22);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(3, bodyY + 16);
+    ctx.lineTo(4, bodyY + 22);
+    ctx.stroke();
+
+    // Arms with elbows
+    const armSwing = dead ? 0 : Math.sin(runPhase * Math.PI * 2) * 12;
+    const elbowBend = Math.abs(Math.sin(runPhase * Math.PI * 2)) * 3;
+    ctx.strokeStyle = '#2d2d4a';
+    ctx.lineWidth = 5.5;
+    ctx.lineCap = 'round';
+    // Left arm
+    ctx.beginPath();
+    ctx.moveTo(-13, bodyY + 20);
+    ctx.quadraticCurveTo(-17 + armSwing * 0.3, bodyY + 26 - elbowBend, -15 + armSwing, bodyY + 34);
+    ctx.stroke();
+    // Left hand
+    ctx.fillStyle = '#ddb896';
+    ctx.beginPath();
+    ctx.arc(-15 + armSwing, bodyY + 35, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Right arm
+    ctx.strokeStyle = '#2d2d4a';
+    ctx.lineWidth = 5.5;
+    ctx.beginPath();
+    ctx.moveTo(13, bodyY + 20);
+    ctx.quadraticCurveTo(17 - armSwing * 0.3, bodyY + 26 - elbowBend, 15 - armSwing, bodyY + 34);
+    ctx.stroke();
+    // Right hand
+    ctx.fillStyle = '#ddb896';
+    ctx.beginPath();
+    ctx.arc(15 - armSwing, bodyY + 35, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hood - layered for depth
+    const hoodGrad = ctx.createRadialGradient(0, bodyY + 6, 3, 0, bodyY + 8, 18);
+    hoodGrad.addColorStop(0, '#3a3a5e');
+    hoodGrad.addColorStop(0.7, '#2d2d4a');
+    hoodGrad.addColorStop(1, '#252540');
+    ctx.fillStyle = hoodGrad;
+    ctx.beginPath();
+    ctx.arc(0, bodyY + 10, 15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hood point / top shape
+    ctx.beginPath();
+    ctx.moveTo(-7, bodyY);
+    ctx.quadraticCurveTo(-2, bodyY - 7, 0, bodyY - 6);
+    ctx.quadraticCurveTo(2, bodyY - 7, 7, bodyY);
+    ctx.quadraticCurveTo(15, bodyY + 3, 15, bodyY + 11);
+    ctx.lineTo(-15, bodyY + 11);
+    ctx.quadraticCurveTo(-15, bodyY + 3, -7, bodyY);
+    ctx.fillStyle = '#2a2a48';
+    ctx.fill();
+
+    // Hood rim
+    ctx.strokeStyle = 'rgba(60,60,100,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, bodyY + 11, 12, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.stroke();
+
+    // Face shadow inside hood - deeper
+    const faceGrad = ctx.createRadialGradient(0, bodyY + 10, 2, 0, bodyY + 11, 11);
+    faceGrad.addColorStop(0, '#111120');
+    faceGrad.addColorStop(1, '#0a0a15');
+    ctx.fillStyle = faceGrad;
+    ctx.beginPath();
+    ctx.arc(0, bodyY + 11, 11, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes (glowing) with better glow
+    const eyeColor = dead ? '#ff3333' : '#ffaa00';
+    const eyeGlow = dead ? 'rgba(255,60,60,0.9)' : 'rgba(255,180,0,0.95)';
+    ctx.shadowColor = eyeColor;
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = eyeGlow;
+    // Rounded eye shapes
+    ctx.beginPath();
+    ctx.ellipse(-5, bodyY + 10, 2, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(5, bodyY + 10, 2, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Eye bright centers
+    ctx.shadowBlur = 4;
+    ctx.fillStyle = dead ? '#ff8888' : '#ffdd66';
+    ctx.beginPath();
+    ctx.ellipse(-5, bodyY + 9.8, 1, 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(5, bodyY + 9.8, 1, 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  } else {
+    // Ducking — compressed body
+    const grad = ctx.createLinearGradient(0, bodyY + 4, 0, bodyY + h);
+    grad.addColorStop(0, '#33335a');
+    grad.addColorStop(0.5, '#2d2d4a');
+    grad.addColorStop(1, '#1a1a30');
+    ctx.fillStyle = grad;
+    drawRoundRect(-16, bodyY + 4, 32, h - 6, 8);
+    ctx.fill();
+
+    // Hood flat
+    ctx.fillStyle = '#2a2a48';
+    drawRoundRect(-14, bodyY, 28, 14, 7);
+    ctx.fill();
+
+    // Hood rim
+    ctx.strokeStyle = 'rgba(60,60,100,0.3)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-10, bodyY + 13);
+    ctx.lineTo(10, bodyY + 13);
+    ctx.stroke();
+
+    // Face shadow
+    const faceGrad = ctx.createRadialGradient(0, bodyY + 7, 1, 0, bodyY + 8, 9);
+    faceGrad.addColorStop(0, '#111120');
+    faceGrad.addColorStop(1, '#0a0a15');
+    ctx.fillStyle = faceGrad;
+    ctx.beginPath();
+    ctx.ellipse(0, bodyY + 8, 9, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes
+    ctx.shadowColor = '#ffaa00';
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = 'rgba(255,180,0,0.95)';
+    ctx.beginPath();
+    ctx.ellipse(-5, bodyY + 7, 2, 1.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(5, bodyY + 7, 2, 1.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.restore();
+}
+
+// --- Draw Bitcoin (HD) ---
+function drawBitcoin(x, y, size, glow) {
+  ctx.save();
+  ctx.translate(x, y);
+  const wobble = Math.sin(frameCount * 0.06 + x * 0.01) * 5;
+  ctx.rotate(wobble * Math.PI / 180);
+
+  // Outer glow
+  if (glow) {
+    ctx.shadowColor = '#ffaa00';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = 'rgba(255,170,0,0.08)';
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Edge / rim shadow
+  ctx.fillStyle = '#996600';
+  ctx.beginPath();
+  ctx.arc(0.5, 0.5, size, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Main coin body
+  const grad = ctx.createRadialGradient(-size * 0.25, -size * 0.25, size * 0.1, 0, 0, size);
+  grad.addColorStop(0, '#fff176');
+  grad.addColorStop(0.3, '#ffe066');
+  grad.addColorStop(0.65, '#ffb800');
+  grad.addColorStop(1, '#cc8800');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0, 0, size, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Inner ring
+  ctx.strokeStyle = 'rgba(153,102,0,0.4)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.75, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Highlight arc (top-left shine)
+  ctx.strokeStyle = 'rgba(255,255,200,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.85, -Math.PI * 0.8, -Math.PI * 0.2);
+  ctx.stroke();
+
+  // ₿ symbol with depth
+  ctx.fillStyle = 'rgba(120,80,0,0.5)';
+  ctx.font = `bold ${size * 1.15}px 'Orbitron', monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('₿', 0.5, 1.5);
+  ctx.fillStyle = '#8a6600';
+  ctx.fillText('₿', 0, 1);
+
+  if (glow) {
+    ctx.shadowColor = '#ffaa00';
+    ctx.shadowBlur = 15;
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// --- Draw Obstacle ---
+function drawObstacle(x, y, w, h, type) {
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Red electrified candlestick
+  const candleH = h * 0.7;
+  const wickH = h;
+  const candleW = w * 0.45;
+
+  // Electric arcs (background)
+  ctx.strokeStyle = `rgba(255,60,60,${0.3 + Math.sin(frameCount * 0.3) * 0.2})`;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    const arcAngle = frameCount * 0.15 + i * Math.PI / 2;
+    const ax = Math.cos(arcAngle) * (w * 0.7);
+    const ay = -h * 0.5 + Math.sin(arcAngle * 1.3) * h * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(0, -h * 0.5);
+    const mx = ax * 0.5 + (Math.random() - 0.5) * 8;
+    const my = ay * 0.5 + (Math.random() - 0.5) * 8;
+    ctx.quadraticCurveTo(mx, my, ax, ay);
+    ctx.stroke();
+  }
+
+  // Glow
+  ctx.shadowColor = 'rgba(255,30,30,0.6)';
+  ctx.shadowBlur = 15;
+
+  // Wick (thin line top and bottom)
+  ctx.strokeStyle = '#ff3333';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, -wickH);
+  ctx.lineTo(0, -wickH + (wickH - candleH) / 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -(wickH - candleH) / 2);
+  ctx.stroke();
+
+  // Candle body
+  const bodyTop = -(wickH + candleH) / 2;
+  const cGrad = ctx.createLinearGradient(0, bodyTop, 0, bodyTop + candleH);
+  cGrad.addColorStop(0, '#cc1111');
+  cGrad.addColorStop(0.5, '#ee2222');
+  cGrad.addColorStop(1, '#991111');
+  ctx.fillStyle = cGrad;
+  drawRoundRect(-candleW / 2, bodyTop, candleW, candleH, 2);
+  ctx.fill();
+
+  // Candle border
+  ctx.strokeStyle = 'rgba(255,80,80,0.7)';
+  ctx.lineWidth = 1;
+  drawRoundRect(-candleW / 2, bodyTop, candleW, candleH, 2);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+
+  // Spark particles around candle
+  ctx.fillStyle = `rgba(255,100,80,${0.5 + Math.sin(frameCount * 0.2) * 0.3})`;
+  for (let i = 0; i < 3; i++) {
+    const sx = Math.sin(frameCount * 0.2 + i * 2.1) * w * 0.6;
+    const sy = -h * 0.3 + Math.cos(frameCount * 0.25 + i * 1.7) * h * 0.35;
+    ctx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+  }
+
+  // Electric shimmer on body
+  if (frameCount % 4 < 2) {
+    ctx.fillStyle = 'rgba(255,200,200,0.15)';
+    drawRoundRect(-candleW / 2 + 2, bodyTop + 2, candleW - 4, candleH - 4, 1);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// --- Particles ---
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.8) * 5,
+      life: 30 + Math.random() * 20,
+      maxLife: 50,
+      size: 2 + Math.random() * 3,
+      color
+    });
+  }
+}
+
+function spawnBitcoinParticles(x, y) {
+  for (let i = 0; i < 10; i++) {
+    const angle = (Math.PI * 2 * i) / 10;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * 3,
+      vy: Math.sin(angle) * 3,
+      life: 25,
+      maxLife: 25,
+      size: 2 + Math.random() * 2,
+      color: `hsl(${40 + Math.random() * 20}, 100%, ${60 + Math.random() * 30}%)`
+    });
+  }
+}
+
+// --- Background ---
+const stars = Array.from({length: 80}, () => ({
+  x: Math.random(), y: Math.random(), s: Math.random() * 1.8 + 0.3, twinkle: Math.random() * 100
+}));
+
+const buildings = Array.from({length: 14}, (_, i) => ({
+  x: i / 14, w: 0.04 + Math.random() * 0.06, h: 0.1 + Math.random() * 0.25,
+  windows: Math.floor(Math.random() * 6) + 2,
+  dark: Math.random() > 0.5
+}));
+
+function drawBackground() {
+  // Sky gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  skyGrad.addColorStop(0, '#06060e');
+  skyGrad.addColorStop(0.5, '#0c0a1a');
+  skyGrad.addColorStop(1, '#15102a');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, GROUND_Y);
+
+  // Stars
+  stars.forEach(s => {
+    const flicker = Math.sin(frameCount * 0.03 + s.twinkle) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(255,255,255,${flicker * 0.6})`;
+    ctx.fillRect(s.x * W, s.y * GROUND_Y * 0.6, s.s, s.s);
+  });
+
+  // Moon
+  ctx.fillStyle = 'rgba(255,240,200,0.12)';
+  ctx.beginPath();
+  ctx.arc(W * 0.8, H * 0.12, 25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,240,200,0.06)';
+  ctx.beginPath();
+  ctx.arc(W * 0.8, H * 0.12, 45, 0, Math.PI * 2);
+  ctx.fill();
+
+  // City skyline
+  const cityY = GROUND_Y;
+  buildings.forEach(b => {
+    const bx = b.x * W;
+    const bw = b.w * W;
+    const bh = b.h * H * 0.5;
+
+    ctx.fillStyle = b.dark ? '#0a0a16' : '#0e0e1e';
+    ctx.fillRect(bx, cityY - bh, bw, bh);
+
+    // Windows
+    for (let wy = 0; wy < b.windows; wy++) {
+      for (let wx = 0; wx < 2; wx++) {
+        const lit = Math.sin(frameCount * 0.01 + wy + wx + b.x * 10) > 0.3;
+        ctx.fillStyle = lit ? 'rgba(255,200,80,0.25)' : 'rgba(255,200,80,0.05)';
+        ctx.fillRect(bx + 3 + wx * (bw/2 - 2), cityY - bh + 4 + wy * (bh / b.windows), bw/2 - 5, bh / b.windows - 3);
+      }
+    }
+  });
+
+  // Ground
+  const groundGrad = ctx.createLinearGradient(0, GROUND_Y, 0, H);
+  groundGrad.addColorStop(0, '#1a1530');
+  groundGrad.addColorStop(0.3, '#12101e');
+  groundGrad.addColorStop(1, '#0a0910');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+
+  // Ground line
+  ctx.strokeStyle = 'rgba(255,140,0,0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, GROUND_Y);
+  ctx.lineTo(W, GROUND_Y);
+  ctx.stroke();
+
+  // Lane markers (subtle perspective lines)
+  ctx.strokeStyle = 'rgba(255,140,0,0.06)';
+  ctx.setLineDash([8, 16]);
+  LANE_X.forEach(lx => {
+    ctx.beginPath();
+    ctx.moveTo(lx, GROUND_Y);
+    ctx.lineTo(lx, H);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  // Ground grid scrolling
+  const gridOffset = (frameCount * speed * speedMul * 1.5) % 24;
+  ctx.strokeStyle = 'rgba(255,140,0,0.03)';
+  ctx.lineWidth = 1;
+  for (let gy = GROUND_Y; gy < H; gy += 24) {
+    const y = gy + gridOffset;
+    if (y > GROUND_Y && y < H) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+  }
+}
+
+// --- Spawning ---
+let spawnTimer = 0;
+function spawnObstacle() {
+  const lane = Math.floor(Math.random() * 3);
+  const w = 28, h = 55 + Math.random() * 20;
+
+  // Don't spawn on same lane as recent obstacles OR nearby coins
+  const blockedLanes = new Set();
+  obstacles.forEach(o => {
+    if (o.y < 60 && o.y > -200) blockedLanes.add(o.lane);
+  });
+  bitcoins.forEach(b => {
+    if (!b.collected && b.y < 60 && b.y > -200) blockedLanes.add(b.lane);
+  });
+
+  let finalLane = lane;
+  if (blockedLanes.has(lane)) {
+    const options = [0,1,2].filter(l => !blockedLanes.has(l));
+    if (options.length) finalLane = options[Math.floor(Math.random() * options.length)];
+    else return; // skip spawn if all lanes busy
+  }
+
+  obstacles.push({
+    lane: finalLane, x: LANE_X[finalLane],
+    y: -80, w, h, type: 'redcandle', baseY: GROUND_Y
+  });
+
+  // Remove any coins that would now overlap with this obstacle
+  bitcoins = bitcoins.filter(b => {
+    if (b.collected) return true;
+    if (b.lane === finalLane && Math.abs(b.y - (-80)) < 100) return false;
+    return true;
+  });
+}
+
+let coinSpawnTimer = 0;
+function spawnBitcoins() {
+  const count = Math.random() > 0.6 ? 3 : Math.random() > 0.3 ? 2 : 1;
+
+  // Find lanes that DON'T have nearby obstacles or coins
+  const blockedLanes = new Set();
+  obstacles.forEach(o => {
+    if (o.y < 60 && o.y > -200) blockedLanes.add(o.lane);
+  });
+  bitcoins.forEach(b => {
+    if (!b.collected && b.y < 60 && b.y > -200) blockedLanes.add(b.lane);
+  });
+
+  const freeLanes = [0, 1, 2].filter(l => !blockedLanes.has(l));
+  if (freeLanes.length === 0) return;
+
+  const lane = freeLanes[Math.floor(Math.random() * freeLanes.length)];
+
+  for (let i = 0; i < count; i++) {
+    bitcoins.push({
+      lane, x: LANE_X[lane],
+      y: -60 - i * 40,
+      size: 10,
+      collected: false
+    });
+  }
+}
+
+// --- Input ---
+let targetLane = 1;
+let touchStartX = 0, touchStartY = 0;
+
+function moveLeft() { if (targetLane > 0) { targetLane--; player.started = true; sfxLaneSwitch(); } }
+function moveRight() { if (targetLane < 2) { targetLane++; player.started = true; sfxLaneSwitch(); } }
+function jump() {
+  if (!player.jumping) {
+    player.vy = JUMP_VEL;
+    player.jumping = true;
+    player.ducking = false;
+    player.started = true;
+    sfxJump();
+  }
+}
+function duck() {
+  if (!player.jumping) {
+    player.ducking = true;
+    player.started = true;
+  }
+}
+function unduck() { player.ducking = false; }
+
+// --- Canvas coordinate helper ---
+function canvasPos(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) * (W / rect.width),
+    y: (clientY - rect.top) * (H / rect.height)
+  };
+}
+
+function handleSettingsTap(cx, cy) {
+  const SL = SETTINGS_LAYOUT;
+
+  // Music toggle
+  if (cx > W * 0.12 && cx < W * 0.12 + 60 && Math.abs(cy - H * SL.musicToggleY) < 18) {
+    musicEnabled = !musicEnabled;
+    sfxMenuSelect();
+    if (!musicEnabled) stopMusic();
+    if (musicEnabled && audioCtx) { startMusic(); }
+    return true;
+  }
+
+  // SFX toggle
+  if (cx > W * 0.12 && cx < W * 0.12 + 60 && Math.abs(cy - H * SL.sfxToggleY) < 18) {
+    sfxEnabled = !sfxEnabled;
+    if (sfxEnabled) sfxMenuSelect();
+    return true;
+  }
+
+  // Music slider
+  if (musicEnabled && Math.abs(cy - H * SL.musicSliderY) < 24 && cx > W * SL.sliderLeft - 20 && cx < W * SL.sliderRight + 20) {
+    settingsSliderDrag = 'music';
+    updateSliderFromX(cx);
+    return true;
+  }
+
+  // SFX slider
+  if (sfxEnabled && Math.abs(cy - H * SL.sfxSliderY) < 24 && cx > W * SL.sliderLeft - 20 && cx < W * SL.sliderRight + 20) {
+    settingsSliderDrag = 'sfx';
+    updateSliderFromX(cx);
+    return true;
+  }
+
+  // Back button
+  if (Math.abs(cx - W/2) < 60 && Math.abs(cy - H * SL.backY) < 20) {
+    state = STATE.MENU;
+    sfxMenuSelect();
+    return true;
+  }
+
+  return false;
+}
+
+function updateSliderFromX(cx) {
+  const SL = SETTINGS_LAYOUT;
+  const left = W * SL.sliderLeft;
+  const right = W * SL.sliderRight;
+  const val = Math.max(0, Math.min(1, (cx - left) / (right - left)));
+
+  if (settingsSliderDrag === 'music') {
+    musicVolume = val * 0.3; // max music volume 0.3
+    if (musicGain && audioCtx) {
+      try { musicGain.gain.setValueAtTime(musicVolume, audioCtx.currentTime); } catch(e) {}
+    }
+  } else if (settingsSliderDrag === 'sfx') {
+    sfxVolume = val;
+  }
+}
+
+function isGearTap(cx, cy) {
+  return Math.abs(cx - (W - 36)) < 22 && Math.abs(cy - 30) < 22;
+}
+
+document.addEventListener('keydown', e => {
+  if (state === STATE.SETTINGS) {
+    if (e.key === 'Escape' || e.key === 'Backspace') { state = STATE.MENU; sfxMenuSelect(); }
+    return;
+  }
+  if (state === STATE.MENU) { ensureAudio(); sfxMenuSelect(); state = STATE.PLAY; initGame(); startMusic(); return; }
+  if (state === STATE.DEAD) {
+    if (player.deadTimer > 40) { state = STATE.MENU; sfxMenuSelect(); }
+    return;
+  }
+  if (e.key === 'ArrowLeft' || e.key === 'a') moveLeft();
+  if (e.key === 'ArrowRight' || e.key === 'd') moveRight();
+  if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') { e.preventDefault(); jump(); }
+  if (e.key === 'ArrowDown' || e.key === 's') duck();
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'ArrowDown' || e.key === 's') unduck();
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  const pos = canvasPos(t.clientX, t.clientY);
+
+  if (state === STATE.SETTINGS) {
+    handleSettingsTap(pos.x, pos.y);
+    return;
+  }
+  if (state === STATE.MENU) {
+    ensureAudio();
+    if (isGearTap(pos.x, pos.y)) { state = STATE.SETTINGS; sfxMenuSelect(); return; }
+    sfxMenuSelect(); state = STATE.PLAY; initGame(); startMusic(); return;
+  }
+  if (state === STATE.DEAD && player.deadTimer > 40) { state = STATE.MENU; sfxMenuSelect(); return; }
+});
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (state === STATE.SETTINGS && settingsSliderDrag) {
+    const t = e.touches[0];
+    const pos = canvasPos(t.clientX, t.clientY);
+    updateSliderFromX(pos.x);
+  }
+}, {passive: false});
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  settingsSliderDrag = null;
+  if (state !== STATE.PLAY) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touchStartX;
+  const dy = t.clientY - touchStartY;
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+
+  if (absDx < 15 && absDy < 15) {
+    jump(); // tap to jump
+  } else if (absDx > absDy) {
+    if (dx < -30) moveLeft();
+    else if (dx > 30) moveRight();
+  } else {
+    if (dy < -30) jump();
+    else if (dy > 30) { duck(); setTimeout(unduck, 400); }
+  }
+});
+
+canvas.addEventListener('mousedown', e => {
+  const pos = canvasPos(e.clientX, e.clientY);
+
+  if (state === STATE.SETTINGS) {
+    handleSettingsTap(pos.x, pos.y);
+    return;
+  }
+  if (state === STATE.MENU) {
+    ensureAudio();
+    if (isGearTap(pos.x, pos.y)) { state = STATE.SETTINGS; sfxMenuSelect(); return; }
+    sfxMenuSelect(); state = STATE.PLAY; initGame(); startMusic(); return;
+  }
+  if (state === STATE.DEAD && player.deadTimer > 40) { state = STATE.MENU; sfxMenuSelect(); return; }
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (state === STATE.SETTINGS && settingsSliderDrag) {
+    const pos = canvasPos(e.clientX, e.clientY);
+    updateSliderFromX(pos.x);
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  settingsSliderDrag = null;
+});
+
+// --- Collision ---
+function checkCollision(obs) {
+  const ph = player.ducking ? DUCK_H : PLAYER_H;
+  const px = player.x, py = player.y;
+  const pLeft = px - 12, pRight = px + 12;
+  const pTop = py - ph, pBottom = py;
+
+  const oLeft = obs.x - obs.w/2, oRight = obs.x + obs.w/2;
+  const oBottom = obs.y;
+  const oTop = obs.y - obs.h;
+
+  return pRight > oLeft && pLeft < oRight && pBottom > oTop && pTop < oBottom;
+}
+
+// --- Update ---
+function update() {
+  frameCount++;
+
+  if (state === STATE.PLAY) {
+    speedMul = 1 + coins / 30;
+    speed = 4.5;
+
+    // Player movement
+    const tx = LANE_X[targetLane];
+    player.x += (tx - player.x) * 0.18;
+    player.lane = targetLane;
+
+    // Jump physics
+    if (player.jumping) {
+      player.vy += GRAVITY;
+      player.y += player.vy;
+      if (player.y >= GROUND_Y) {
+        player.y = GROUND_Y;
+        player.vy = 0;
+        player.jumping = false;
+      }
+    }
+
+    // Run animation
+    player.runTimer += 0.12;
+    if (player.runTimer >= 1) player.runTimer -= 1;
+    player.runFrame = player.runTimer;
+
+    // Spawn
+    spawnTimer += speedMul;
+    if (spawnTimer > 65 / Math.min(speedMul, 1.8)) {
+      spawnObstacle();
+      spawnTimer = 0;
+    }
+    coinSpawnTimer += speedMul;
+    if (coinSpawnTimer > 40) {
+      spawnBitcoins();
+      coinSpawnTimer = 0;
+    }
+
+    // Move obstacles
+    const moveSpeed = speed * speedMul;
+    obstacles.forEach(o => { o.y += moveSpeed; });
+    obstacles = obstacles.filter(o => o.y < H + 60);
+
+    // Move bitcoins
+    bitcoins.forEach(b => { b.y += moveSpeed; });
+    bitcoins = bitcoins.filter(b => b.y < H + 40 && !b.collected);
+
+    // Collect bitcoins
+    bitcoins.forEach(b => {
+      if (!b.collected) {
+        const dx = Math.abs(player.x - b.x);
+        const ph = player.ducking ? DUCK_H : PLAYER_H;
+        const dy = Math.abs((player.y - ph/2) - b.y);
+        if (dx < 28 && dy < 30) {
+          b.collected = true;
+          coins++;
+          spawnBitcoinParticles(b.x, b.y);
+          sfxCoinCollect();
+        }
+      }
+    });
+
+    // Collision
+    obstacles.forEach(o => {
+      if (checkCollision(o)) {
+        die(o);
+      }
+    });
+
+    // Particles
+    particles.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.1;
+      p.life--;
+    });
+    particles = particles.filter(p => p.life > 0);
+
+    // Screen shake
+    if (shakeTimer > 0) shakeTimer--;
+    if (flashTimer > 0) flashTimer--;
+  }
+
+  if (state === STATE.DEAD) {
+    player.deadTimer++;
+    if (shakeTimer > 0) shakeTimer--;
+    if (flashTimer > 0) flashTimer--;
+    particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.life--; });
+    particles = particles.filter(p => p.life > 0);
+  }
+}
+
+const deathSayings = [
+  "Get a load of Michael Saylor over here",
+  "Bro I\u0027m gonna be honest with you, you suck at this.",
+  "Craig Wright is better at this than you are.",
+  "Were all hodlonaut except you",
+  "Stick to MSTR",
+  "You have real class of 25 energy",
+  "Bruh you\u0027re supposed to avoid the candles",
+  "Generational wealth? More like generational poverty.",
+  "The state is growing stronger while you sit here and suck at this game",
+  "That\u0027s not very many bitcoins you know",
+  "Bro you\u0027re supposed to avoid the red candles",
+  "Maxi? Yeah you maximally suck at this game.",
+  "You just got liquidated by basic motor skills.",
+  "Even Peter Schiff saw that one coming.",
+  "Proof of work, not proof of whatever that was.",
+  "You died faster than an altcoin in a bear market.",
+  "This is why you\u0027re not in the multisig.",
+  "Survive the candles. It\u0027s not complicated.",
+  "You play like your seed phrase is on iCloud.",
+  "Bro got rugged by gravity.",
+  "Satoshi didn\u0027t vanish for this.",
+  "I\u0027ve seen better reflexes from a hardware wallet.",
+  "That run was more over than a four-year cycle top.",
+  "You\u0027re getting outperformed by Bitcoin on a Sunday.",
+  "This is not how you front-run hyperbitcoinization.",
+  "You move like you bought the top and sold the bottom.",
+  "The only thing getting smoked harder than you is fiat.",
+  "That was deeply non-sovereign behavior.",
+  "Not beating the NPC allegations with that one.",
+  "You just fumbled the hardest money in gaming.",
+  "Even a nocoiner could dodge better than that.",
+  "You got packed up like an overleveraged tourist.",
+  "Your gameplay has strong \u0022sent from Coinbase\u0022 energy.",
+  "This is why no one gives you the node password.",
+  "You died like a man who stores corn on an exchange.",
+  "Respectfully, that was incredibly paper-handed.",
+  "Your ancestors did not stack sats for this.",
+  "You just turned a bull market into a personal recession.",
+  "That was uglier than a Bitcoin conference panel Q&A.",
+  "Bro got taken off the blockchain permanently.",
+  "You play like a guy who says \u0022crypto\u0022 in a Bitcoin room.",
+  "This death is now permanently recorded in the meme chain.",
+  "You have the survival instincts of an FTX user.",
+  "You\u0027re not orange-pilled, you\u0027re skill-issue-pilled.",
+  "You just got censored by the free market.",
+  "Imagine dying with this much conviction.",
+  "That performance was weaker than fiat purchasing power.",
+  "You got dropped faster than an NFT floor.",
+  "This run has been successfully debanked.",
+  "The candles remain undefeated.",
+  "Skill issue confirmed on-chain.",
+  "Your K/D ratio is more tragic than your cost basis.",
+  "You\u0027re playing like BlackRock already won.",
+  "You got rekt in a fully decentralized manner.",
+  "Even the ECB couldn\u0027t inflate that score.",
+  "You died with zero confirmations.",
+  "That was less a run and more a donation.",
+  "You have been outperformed by a guy yelling \u0022HODL\u0022 in 2017.",
+  "This is why your UTXOs don\u0027t respect you.",
+  "One more run like that and you\u0027re getting converted to fiat.",
+  "Get serious bro, Saylor is watching.",
+  "You are not beating the tourist allegations.",
+  "That was a deeply embarrassing candle encounter.",
+  "Bro died and somehow blamed the Fed.",
+  "You suck with a level of confidence I almost respect.",
+  "You play like your portfolio is 80% vibes.",
+  "Not everyone is built for the orange life.",
+  "You make red candles look unavoidable.",
+  "I need you to know that was hard to watch.",
+  "Even Buttcoin is laughing at you right now.",
+  "Stay humble. Dodge better.",
+  "Rejected by the candles.",
+  "Absolutely no sats for that run.",
+  "Terminal skill issue.",
+  "You have been respectfully rekt.",
+  "Not very sovereign of you.",
+  "Dead. Still bullish.",
+  "Fiat mentality.",
+  "Candles: 1. You: 0.",
+  "Outplayed by volatility.",
+  "You died so hard the block got orphaned.",
+  "Jerome Powell felt a disturbance in the force and smiled.",
+  "Even your cold storage isn\u0027t safe from gameplay like that.",
+  "You just got assassinated by market structure.",
+  "That run was sponsored by poor decision-making.",
+  "Somewhere, a mining rig turned itself off in shame.",
+  "You have been judged by the council of giant stone heads.",
+  "Satoshi came back for one second just to dislike that run.",
+  "Your bloodline is now exit liquidity.",
+  "A whale just saw that and dumped on principle.",
+  "That was so bad it increased the circulating supply of embarrassment.",
+  "The mempool rejected your whole existence.",
+  "You were slain by candles and bad genetics.",
+  "Even the Byzantine generals agreed that was pathetic.",
+  "Your descendants will inherit nothing but this replay.",
+  "That death was tax deductible somehow.",
+  "You got folded like a Ledger recovery phrase pamphlet.",
+  "The IMF has entered the chat and is clapping.",
+  "You move like a man asking if Venmo supports Lightning.",
+  "A Bitcoiner in a Patagonia vest just shook his head sadly.",
+  "You\u0027ve been defeated by shapes and colors.",
+  "The orange pill has been revoked.",
+  "That run got notarized as a public humiliation event.",
+  "Your aura just got rugged.",
+  "You died in a way that made the candles seem reasonable.",
+  "A random guy named Preston is making a face about this.",
+  "Your soul has been rehypothecated.",
+  "The free market has asked you to sit this one out.",
+  "Even your enemies wanted better for you than that.",
+  "You got hit with spiritually leveraged downside.",
+  "That was less \u0022proof of work\u0022 and more \u0022proof of panic.\u0022",
+  "NASA tracked that collapse from orbit.",
+  "You just got margin called by God.",
+  "Your run has been downgraded to junk status.",
+  "Even your shadow tried to dodge for you.",
+  "A guy in a Miami penthouse just tweeted \u0022few understand\u0022 after watching you die.",
+  "You died like you pay for trading signals.",
+  "The network remains secure. You do not.",
+  "You got vaporized by candlestick geometry.",
+  "The node operators have voted to laugh at you.",
+  "Your performance has been wrapped and bridged to hell.",
+  "You have passed away in a tax-inefficient manner.",
+  "That was the financial equivalent of falling down an escalator.",
+  "You got outplayed by red rectangles.",
+  "The ghost of Mt. Gox accepts your offering.",
+  "Your chakras are now stored in a custodial wallet.",
+  "Even the buttcoin subreddit would call that excessive.",
+  "You\u0027ve been killed by market vibes alone.",
+  "Your run just got fact-checked by reality.",
+  "Some guy with laser eyes just unfollowed you in spirit.",
+  "You have the survivability of a JPEG monkey in a house fire.",
+  "That gameplay was backed 1:1 by nonsense.",
+  "You just died in a way that required KYC.",
+  "Bro got spiritually delisted.",
+  "The chart looked at you and chose violence.",
+  "You were not built for this halving cycle.",
+  "That death created two new economists.",
+  "You got packed up like a conference swag bag.",
+  "Even your imaginary private island is gone now.",
+  "Your body has been converted into unrealized losses.",
+  "You died and the candles kept going like nothing happened. Brutal.",
+  "A maximalist just whispered \u0022sad\u0022 and kept walking.",
+  "That run was weaker than hotel Wi-Fi at Bitcoin 2022.",
+  "You just got folded into the fourth turning.",
+  "The red candle didn\u0027t even need to try.",
+  "Your entire strategy appears to be screaming internally.",
+  "That death was brought to you by the number zero.",
+  "You have been seized by the ministry of skill issues.",
+  "Bro entered price discovery and discovered pain.",
+  "You were taken offline for routine embarrassment.",
+  "The candles are now doing a victory lap around your ego.",
+  "That one\u0027s going in the immutable clown ledger.",
+  "You just got repo\u0027d by destiny.",
+  "Even a gold bug would feel bad for you after that.",
+  "You died with the confidence of a man who says \u0022web3\u0022 at brunch.",
+  "Your run has been sanctioned by the market.",
+  "Not even infinite money printing could bail that out.",
+  "You got hit so hard your portfolio became a philosophy.",
+  "Somewhere, an index fund investor feels validated.",
+  "Your gameplay has been declared transitory.",
+  "The moon has cancelled your reservation.",
+  "Your sats have been reassigned to a stronger organism.",
+  "An owl in a fleece vest now owns your soul.",
+  "The candles held a town hall and voted you off the island.",
+  "Your run has been turned into a cautionary PDF.",
+  "The blockchain coughed politely and removed you.",
+  "A red candle just bought your childhood home.",
+  "You died so weird the market paused to journal about it.",
+  "Your score has been buried under a Costco of shame.",
+  "The volcano bond has personally rejected you.",
+  "You were defeated by lines, numbers, and your own ancestry.",
+  "Your final form was just \u0022guy getting owned.\u0022",
+  "The cosmic ledger has marked you as unserious.",
+  "Even the concept of scarcity is embarrassed for you.",
+  "The game looked at your effort and said \u0022be for real.\u0022",
+  "You got folded like a lawn chair at a sovereign debt summit.",
+  "A passing pigeon just became more sovereign than you.",
+  "You died and caused a minor fork in my self-esteem.",
+  "The candles have unionized against you specifically.",
+  "You have become a bearish omen.",
+  "You died and the candles immediately started gossiping.",
+  "Satoshi\u0027s laptop just closed itself.",
+  "A man in a vineyard vines vest has claimed your remains.",
+  "The blockchain has described your run as \u0022concerning.\u0022",
+  "You got killed so badly a macro podcast started.",
+  "The red candle tucked you in permanently.",
+  "Your death has been converted into a 48-tweet thread.",
+  "A goose wearing laser eyes now controls your estate.",
+  "You died in a way that summoned three newsletter authors.",
+  "The mempool made a face at you.",
+  "A sovereign individual would not have done that.",
+  "You got spiritually front-run by a rectangle.",
+  "The chart bent slightly just to make sure you lost.",
+  "You have been composted into market sentiment.",
+  "A shirtless guy in Puerto Rico just sensed weakness.",
+  "Your gameplay has been tokenized as a warning.",
+  "The candles are now raising your children.",
+  "You died with such force it created a Substack.",
+  "The orange pill dissolved on contact.",
+  "Your run has been denied by maritime law.",
+  "A hardware wallet somewhere just whispered \u0022nah.\u0022",
+  "The market has placed you in rice for water damage.",
+  "You got killed by vibes, geometry, and old sins.",
+  "This death was verified by six emotionally unavailable nodes.",
+  "Your soul is now trading at a discount to NAV.",
+  "The candles looked you over and chose cruelty.",
+  "You died and accidentally invented a new recession indicator.",
+  "A guy named Tucker is explaining your death on YouTube right now.",
+  "Your run has entered a custodial afterlife.",
+  "You got packed up like a depegging stablecoin rumor.",
+  "The chart just called you \u0022brother\u0022 in a deeply disrespectful tone.",
+  "Your sats fled the scene on tiny little legs.",
+  "Even the moon is like \u0022don\u0027t bring me into this.\u0022",
+  "You died in a way that made inflation feel elegant.",
+  "The red candles formed a jazz quartet to celebrate.",
+  "Your performance has been wrapped, bridged, hacked, and forgotten.",
+  "A Balkan guy with 14 monitors just nodded knowingly.",
+  "You have been seized by the goblin of poor entries.",
+  "Your death is now part of the CPI basket.",
+  "The game has classified you as loose monetary policy.",
+  "You got hit by a red candle with landlord energy.",
+  "The blockchain wants to see other players.",
+  "Your run has been turned into a laminated infographic.",
+  "A horse with perfect credit just inherited your bags.",
+  "You died so strangely even the candles asked for context.",
+  "The market just put your score in a little envelope and sighed.",
+  "Your private keys are now in a bird sanctuary.",
+  "You got outmaneuvered by a haunted Excel file.",
+  "The red candle arrived in a town car and ruined you.",
+  "Your gameplay has strong \u0022microwaves fish in the office\u0022 energy.",
+  "You have been judged and found extremely retail.",
+  "The chart is now wearing your hoodie.",
+  "You died and caused Jerome Powell to gain one HP.",
+  "A tiny economist in a waistcoat is stamping DENIED on your forehead.",
+  "Your run has been absorbed into a tasteful macro mosaic.",
+  "The candles did not kill you. They simply edited you out.",
+  "You\u0027ve been collapsed into a singularity of clown finance.",
+  "Your death was so clean it got a museum grant.",
+  "The market put your effort in a mason jar and buried it.",
+  "You got spiritually diluted.",
+  "A mysterious Baltic uncle just said \u0022exactly\u0022 and vanished.",
+  "Your score has been converted into artisanal debt.",
+  "The orange coin spun once and said \u0022absolutely not.\u0022",
+  "You died and the game started smelling like cold brew.",
+  "Your run was too weak for the timeline you entered.",
+  "The red candles are now subletting your confidence.",
+  "The market has reclassified you as decorative.",
+  "You got folded into a cardigan of irreversible shame.",
+  "Your death triggered a panel discussion in Singapore.",
+  "The chart gave you one look and called compliance.",
+  "You got sent to the shadow realm by a candlestick with podcast equipment.",
+  "Your blood type is now drawdown.",
+  "The mempool just screenshotted you for later.",
+  "You died like a man who says \u0022liquidity event\u0022 during dinner.",
+  "Your aura got margin called behind a Sweetgreen.",
+  "The candles have started a homeowners association against you.",
+  "A red rectangle in loafers has taken everything.",
+  "Your run is now being studied by six guys named Brent.",
+  "The market hit you with an upper-decker of fate.",
+  "You got outplayed by federally ambiguous nonsense.",
+  "Your death now appears in the footnotes of empire.",
+  "A node operator just took off his glasses very slowly.",
+  "You died and your Patagonia vest lost its tax advantages.",
+  "The chart threw a dinner party and did not invite you.",
+  "Your final moments were sponsored by endogenous humiliation.",
+  "You have been megafarmed by candlestick aristocracy.",
+  "Your score is being carried around in a little wheelbarrow by goblins.",
+  "The orange pill turned around and went home.",
+  "You got spiritually repo\u0027d outside a conference center.",
+  "The red candle had a clean haircut and impossible confidence.",
+  "You died so hard the game got an accent.",
+  "Your sats were redistributed to a guy with a newsletter and outdoor furniture.",
+  "The market described your run as \u0022a brave first draft.\u0022",
+  "You got hit with a yield curve inversion of the soul.",
+  "Your death has been securitized and sold to pension funds.",
+  "The candles formed a small committee and agreed you had to go.",
+  "You were removed for violating the dignity of capital.",
+  "A silver fox on a macro panel just smirked instinctively.",
+  "The game put your effort in checked baggage and lost it.",
+  "You have been outlived by a rumor.",
+  "Skill issue, but make it monetary.",
+  "Rejected by candle society.",
+  "Your aura has depegged.",
+  "Fatal retail behavior.",
+  "Spiritually liquidated.",
+  "Too weak for the timeline.",
+  "Denied by geometry.",
+  "Your confidence has forked.",
+  "Killed by macro forces.",
+  "Deeply non-fungible failure.",
+  "The chart remembers this.",
+  "Market said be serious.",
+  "Deleted by rectangles.",
+  "Sovereignty revoked.",
+  "Bearish for your bloodline.",
+  "The candles send regards.",
+  "Humiliated on-chain.",
+  "Fiscal clown event.",
+  "Orange pill rejected.",
+  "Repo\u0027d by destiny.",
+  "You are living proof that self-custody is not enough.",
+  "That run just set Bitcoin adoption back six months.",
+  "Even your future self sold you out after watching that.",
+  "You play like a guy who asks for a refund on sats.",
+  "The candles didn\u0027t kill you. They corrected a mistake.",
+  "You died exactly how a weak hand lives.",
+  "That was humiliating on a cellular level.",
+  "You move like every bad decision your family ever made.",
+  "This is why nobody trusts you with the seed phrase.",
+  "You just embarrassed yourself in front of the hardest money ever created.",
+  "Your gameplay is a hate crime against momentum.",
+  "You got what economists call \u0022completely cooked.\u0022",
+  "That wasn\u0027t a loss. That was an exposure event.",
+  "Even fiat feels bad for you.",
+  "You have the instincts of exit liquidity.",
+  "Your run died the way your convictions live: cheaply.",
+  "It\u0027s actually impressive how badly you fold under pressure.",
+  "You make red candles look like they\u0027re doing community service.",
+  "That performance was beneath regulation.",
+  "You died like someone who still says \u0022crypto\u0022 unironically.",
+  "Your bloodline should have hedged.",
+  "Nobody who watched that believes in you anymore.",
+  "You got killed with the kind of ease that ruins friendships.",
+  "Your score looks like a cry for help.",
+  "You play like a cautionary tale told at private dinners.",
+  "The market watched you and chose contempt.",
+  "That was so bad it became personal.",
+  "You\u0027ve got the reaction time of a guy reading the terms and conditions.",
+  "The candles are not overpowered. You\u0027re just deeply inadequate.",
+  "You died in a way that lowers property values.",
+  "That run had no father.",
+  "You are the weak link in your own sovereignty thesis.",
+  "Even a nocoiner would tell you to hang it up.",
+  "The red candles were trying not to laugh.",
+  "That was the sort of death people remember for the wrong reasons.",
+  "Your gameplay has \u0022born to lose, too proud to learn\u0022 energy.",
+  "You just made failure look hereditary.",
+  "The only thing less durable than fiat is your confidence.",
+  "You died like an intern with admin access.",
+  "If this were proof of work, you\u0027d be banned from the network.",
+  "That death had \u0022mom come pick me up\u0022 energy.",
+  "You are not built for volatility or basic dignity.",
+  "The game keeps giving you chances and you keep doing this.",
+  "Honestly, the candles showed restraint.",
+  "Your instincts belong in a museum of preventable disasters.",
+  "That wasn\u0027t a choke. That was your natural form.",
+  "You make panic look like a personality trait.",
+  "Satoshi would re-centralize the network to stop watching this.",
+  "You died with all the grace of a failed influencer launch.",
+  "The scoreboard is begging you to stop.",
+  "Weak hands, weak life.",
+  "Genetic drawdown.",
+  "Born retail.",
+  "Terminally liquidatable.",
+  "Conviction sold separately.",
+  "Too soft for scarcity.",
+  "A deeply unserious death.",
+  "Cooked beyond recovery.",
+  "Weak aura event.",
+  "Failure confirmed.",
+  "And lo, the weak-handed one approached the candle and was immediately scattered.",
+  "In the age before blocks, it was written: \u0022this guy cannot dodge.\u0022",
+  "The orange tablets foretold your downfall in embarrassing detail.",
+  "And the prophet said unto thee: skill issue.",
+  "Verily, thou hast been weighed against the ledger and found extremely retail.",
+  "The elders of cold storage warned us of one like you.",
+  "And on the seventh confirmation, thy run was judged mid.",
+  "From dust thou camest, to red candles thou returnest.",
+  "The Book of Nodes contains a chapter entirely about avoiding what thou just hit.",
+  "It is written in the chain: do not play like this.",
+  "Yea, the block was full, but thy talent was empty.",
+  "Thou hast wandered from the narrow path and directly into the candle.",
+  "And Satoshi spake not, for thy failure already said enough.",
+  "The orange scrolls called this \u0022an avoidable humiliation.\u0022",
+  "Woe unto the tourist, for he knoweth neither timing nor shame.",
+  "Thy reflexes are as chaff before the mining wind.",
+  "And the faithful did avert their eyes, for thy run was cursed.",
+  "Behold: the candle did not move. Thou simply chose ruin.",
+  "The sacred multisig was sealed against thee for obvious reasons.",
+  "Thou art not him, saith the ledger.",
+  "And a great red pillar rose from the earth and bonked thee without mercy.",
+  "The miners shall sing of this disaster, mockingly.",
+  "Thou hast brought dishonor upon thine hardware wallet.",
+  "The covenant of HODL does not extend to gameplay this poor.",
+  "Lo, even the pagans of fiat laughed at thy descent.",
+  "The oracle of the mempool declared: \u0022bro is finished.\u0022",
+  "Cursed be the path of the man who jumps directly into volatility.",
+  "Thy name has been entered into the clown annals of the chain.",
+  "Hear now the lesson: candles red, player dead.",
+  "And the laser-eyed beasts did recoil from thy form.",
+  "The prophets foretold many collapses, but none this avoidable.",
+  "Thou hast been smitten by market forces and weak ankles.",
+  "Verily, thy strategy was built upon sand and vibes.",
+  "The temple bells ring not for heroes, but for whatever that was.",
+  "Blessed are the sovereign, unlike thee.",
+  "Thou didst seek the moon, yet found only skill-based judgment.",
+  "The ancient stackers carved into stone: \u0022lmao.\u0022",
+  "By thine own hand wast thou rugged.",
+  "And there was much cope across the land.",
+  "The orange heavens reject thy application.",
+  "In the First Halving, the priests wore fleece and spoke in podcasts. They foresaw thy collapse.",
+  "The sacred candle of the East bent slightly and that was enough to end thee.",
+  "The monks of the cold vault chanted \u0022not like this\u0022 as thou perished.",
+  "The third scroll of hyperbitcoinization explicitly said to dodge left.",
+  "And the serpent of leverage whispered, and thou immediately listened.",
+  "The high priest of UTXO looked upon thy run and tore his garments.",
+  "In elder days, such gameplay would have been cast into the sea.",
+  "The orange sun darkened for one moment out of secondhand embarrassment.",
+  "Thou hast triggered the Feast of Mockery foretold in the Book of Saylor.",
+  "The chain is eternal. Thy run was not.",
+  "Before kings and central bankers was there the Candle, and before the Candle was thy bad timing.",
+  "The archivists shall preserve thy death in a jar of ridicule.",
+  "The Lord of Hashrate hath withdrawn his protection from thee.",
+  "Upon the mountain of conviction, thou slipped on a very obvious red line.",
+  "The sacred birds of sovereignty now peck at thy remains.",
+  "Thus spoke the orange prophet: \u0022get him outta here.\u0022",
+  "Thy score has been offered to the volcano as tribute.",
+  "The ancients measured men in satoshis and found thee underweight.",
+  "The ritual of survival was explained many times, yet still thou bonked.",
+  "And the people said \u0022few understand,\u0022 but in thy case, many do.",
+  "Verily, thou art rekt.",
+  "The chain rejects thee.",
+  "Thy hands were paper.",
+  "Woe unto thy reflexes.",
+  "The candle was just.",
+  "Thou wert not sovereign.",
+  "Thy run displeased the nodes.",
+  "Behold, a clown event.",
+  "The orange light fades.",
+  "Thus ends thy cope."
+];
+
+let deathSaying = '';
+
+function die(obs) {
+  state = STATE.DEAD;
+  player.deadTimer = 0;
+  shakeTimer = 15;
+  flashTimer = 8;
+  deathSaying = deathSayings[Math.floor(Math.random() * deathSayings.length)];
+  if (coins > highScore) {
+    highScore = coins;
+  }
+  spawnParticles(player.x, player.y - PLAYER_H/2, '#ff4444', 15);
+  spawnParticles(player.x, player.y - PLAYER_H/2, '#ff8800', 10);
+  sfxDeath();
+  stopMusic();
+}
+
+// --- Draw ---
+function draw() {
+  ctx.save();
+
+  // Screen shake
+  if (shakeTimer > 0) {
+    ctx.translate(Math.random() * 6 - 3, Math.random() * 6 - 3);
+  }
+
+  drawBackground();
+
+  if (state === STATE.PLAY || state === STATE.DEAD) {
+    // Bitcoins
+    bitcoins.forEach(b => {
+      if (!b.collected) drawBitcoin(b.x, b.y, b.size, true);
+    });
+
+    // Obstacles
+    obstacles.forEach(o => {
+      drawObstacle(o.x, o.y, o.w, o.h, o.type);
+    });
+
+    // Player
+    drawPlayer(player.x, player.y, player.ducking, player.runFrame, state === STATE.DEAD);
+
+    // Particles
+    particles.forEach(p => {
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    });
+    ctx.globalAlpha = 1;
+
+    // Flash on death
+    if (flashTimer > 0) {
+      ctx.fillStyle = `rgba(255,50,50,${flashTimer / 10})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // HUD
+    drawHUD();
+  }
+
+  if (state === STATE.MENU) drawMenu();
+  if (state === STATE.SETTINGS) drawSettings();
+  if (state === STATE.DEAD && player.deadTimer > 40) drawGameOver();
+
+  ctx.restore();
+}
+
+function drawHUD() {
+  // Bitcoin count - centered top
+  drawBitcoin(W/2 - 50, 38, 12, true);
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 28px Orbitron';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(255,215,0,0.5)';
+  ctx.shadowBlur = 12;
+  ctx.fillText(String(coins), W/2 - 30, 46);
+  ctx.shadowBlur = 0;
+
+  // Label
+  ctx.fillStyle = 'rgba(255,200,100,0.5)';
+  ctx.font = '10px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.fillText('₿TC', W/2 - 18, 60);
+}
+
+function drawMenu() {
+  // Darken
+  ctx.fillStyle = 'rgba(6,6,12,0.88)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title glow
+  ctx.shadowColor = 'rgba(255,140,0,0.3)';
+  ctx.shadowBlur = 40;
+  ctx.fillStyle = '#fff';
+  ctx.font = '900 36px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.fillText('BITCOIN', W/2, H * 0.3);
+  ctx.fillText('BOOGIE', W/2, H * 0.3 + 42);
+  ctx.shadowBlur = 0;
+
+  // Subtitle
+  ctx.fillStyle = 'rgba(255,180,100,0.5)';
+  ctx.font = '14px Rajdhani';
+  ctx.letterSpacing = '4px';
+  ctx.fillText('STACK SATS OR DIE TRYING', W/2, H * 0.3 + 70);
+
+  // Animated bitcoin
+  const bobY = Math.sin(frameCount * 0.04) * 8;
+  drawBitcoin(W/2, H * 0.5 + bobY, 22, true);
+
+  // Play prompt
+  const pulse = Math.sin(frameCount * 0.06) * 0.3 + 0.7;
+  ctx.fillStyle = `rgba(255,200,100,${pulse})`;
+  ctx.font = '700 16px Orbitron';
+  ctx.fillText('TAP TO PLAY', W/2, H * 0.65);
+
+  // Controls
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.font = '12px Rajdhani';
+  ctx.fillText('← → MOVE   ↑ JUMP   ↓ DUCK', W/2, H * 0.74);
+  ctx.fillText('SWIPE OR TAP ON MOBILE', W/2, H * 0.78);
+
+  // High score
+  if (highScore > 0) {
+    ctx.fillStyle = 'rgba(255,180,0,0.4)';
+    ctx.font = '12px Orbitron';
+    ctx.fillText(`BEST: ${highScore}`, W/2, H * 0.86);
+  }
+
+  // Settings gear icon (top right)
+  drawGearIcon(W - 36, 30, 14);
+}
+
+function drawGearIcon(x, y, r) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(255,200,100,0.4)';
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI * 2 * i) / 6;
+    ctx.fillRect(
+      Math.cos(a) * r * 0.55 - 2.5,
+      Math.sin(a) * r * 0.55 - 2.5,
+      5, 5
+    );
+  }
+  // Inner hole
+  ctx.fillStyle = state === STATE.SETTINGS ? '#1a1530' : 'rgba(6,6,12,0.9)';
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Settings screen layout constants
+const SETTINGS_LAYOUT = {
+  musicToggleY: 0.3,
+  musicSliderY: 0.38,
+  sfxToggleY: 0.5,
+  sfxSliderY: 0.58,
+  backY: 0.75,
+  sliderLeft: 0.15,
+  sliderRight: 0.85,
+  sliderH: 8,
+  knobR: 12,
+};
+
+function drawSettings() {
+  // Background
+  ctx.fillStyle = 'rgba(6,6,12,0.94)';
+  ctx.fillRect(0, 0, W, H);
+
+  const SL = SETTINGS_LAYOUT;
+
+  // Title
+  ctx.fillStyle = '#fff';
+  ctx.font = '900 24px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.fillText('SETTINGS', W/2, H * 0.15);
+
+  // Decorative line
+  ctx.strokeStyle = 'rgba(255,140,0,0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.2, H * 0.19);
+  ctx.lineTo(W * 0.8, H * 0.19);
+  ctx.stroke();
+
+  // --- Music Section ---
+  drawToggle(W * 0.15, H * SL.musicToggleY, musicEnabled, 'MUSIC');
+  if (musicEnabled) {
+    drawSlider(W * SL.sliderLeft, W * SL.sliderRight, H * SL.musicSliderY, musicVolume / 0.3);
+  }
+
+  // --- SFX Section ---
+  drawToggle(W * 0.15, H * SL.sfxToggleY, sfxEnabled, 'SFX');
+  if (sfxEnabled) {
+    drawSlider(W * SL.sliderLeft, W * SL.sliderRight, H * SL.sfxSliderY, sfxVolume);
+  }
+
+  // Back button
+  const pulse = Math.sin(frameCount * 0.06) * 0.2 + 0.8;
+  ctx.fillStyle = `rgba(255,200,100,${pulse})`;
+  ctx.font = '700 15px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.fillText('← BACK', W/2, H * SL.backY);
+}
+
+function drawToggle(x, y, enabled, label) {
+  // Toggle track
+  const trackW = 44, trackH = 22, trackR = 11;
+  ctx.fillStyle = enabled ? 'rgba(255,140,0,0.5)' : 'rgba(255,255,255,0.1)';
+  drawRoundRect(x, y - trackH/2, trackW, trackH, trackR);
+  ctx.fill();
+
+  // Toggle knob
+  const knobX = enabled ? x + trackW - trackR : x + trackR;
+  ctx.fillStyle = enabled ? '#ffaa00' : 'rgba(255,255,255,0.4)';
+  ctx.beginPath();
+  ctx.arc(knobX, y, trackR - 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Label
+  ctx.fillStyle = enabled ? 'rgba(255,200,100,0.9)' : 'rgba(255,255,255,0.3)';
+  ctx.font = '700 14px Orbitron';
+  ctx.textAlign = 'left';
+  ctx.fillText(label, x + trackW + 14, y + 5);
+}
+
+function drawSlider(left, right, y, value) {
+  const SL = SETTINGS_LAYOUT;
+  const sliderW = right - left;
+
+  // Track background
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  drawRoundRect(left, y - SL.sliderH/2, sliderW, SL.sliderH, SL.sliderH/2);
+  ctx.fill();
+
+  // Filled portion
+  const fillW = sliderW * Math.max(0, Math.min(1, value));
+  if (fillW > 0) {
+    const grad = ctx.createLinearGradient(left, 0, left + fillW, 0);
+    grad.addColorStop(0, 'rgba(255,140,0,0.6)');
+    grad.addColorStop(1, 'rgba(255,180,50,0.8)');
+    ctx.fillStyle = grad;
+    drawRoundRect(left, y - SL.sliderH/2, fillW, SL.sliderH, SL.sliderH/2);
+    ctx.fill();
+  }
+
+  // Knob
+  const knobX = left + fillW;
+  ctx.fillStyle = '#ffcc44';
+  ctx.shadowColor = 'rgba(255,180,0,0.4)';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(knobX, y, SL.knobR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Knob inner
+  ctx.fillStyle = '#ffaa00';
+  ctx.beginPath();
+  ctx.arc(knobX, y, SL.knobR - 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Percentage
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = '11px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.fillText(Math.round(value * 100) + '%', right + 28, y + 4);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(6,6,12,0.85)';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.fillStyle = '#ff4444';
+  ctx.font = '900 28px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(255,50,50,0.5)';
+  ctx.shadowBlur = 20;
+  ctx.fillText('REKT', W/2, H * 0.3);
+  ctx.shadowBlur = 0;
+
+  // Score - sats collected
+  ctx.fillStyle = 'rgba(255,200,100,0.6)';
+  ctx.font = '12px Orbitron';
+  ctx.fillText('FULL COINS', W/2, H * 0.4);
+  drawBitcoin(W/2 - 30, H * 0.475, 14, true);
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 36px Orbitron';
+  ctx.textAlign = 'center';
+  ctx.fillText(String(coins), W/2 + 14, H * 0.48);
+
+  // High score
+  ctx.fillStyle = coins >= highScore ? '#ffcc00' : 'rgba(255,180,0,0.4)';
+  ctx.font = '13px Orbitron';
+  if (coins >= highScore) {
+    ctx.fillText('★ NEW BEST! ★', W/2, H * 0.55);
+  } else {
+    ctx.fillText(`BEST: ${highScore}`, W/2, H * 0.55);
+  }
+
+  // Death saying
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '500 14px Rajdhani';
+  ctx.textAlign = 'center';
+  // Word wrap the saying
+  const maxLineW = W - 60;
+  const words = deathSaying.split(' ');
+  let lines = [];
+  let currentLine = words[0];
+  for (let i = 1; i < words.length; i++) {
+    const test = currentLine + ' ' + words[i];
+    if (ctx.measureText(test).width > maxLineW) {
+      lines.push(currentLine);
+      currentLine = words[i];
+    } else {
+      currentLine = test;
+    }
+  }
+  lines.push(currentLine);
+  const lineH = 18;
+  const startY = H * 0.62;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, W/2, startY + i * lineH);
+  });
+
+  // Restart
+  const pulse = Math.sin(frameCount * 0.06) * 0.3 + 0.7;
+  ctx.fillStyle = `rgba(255,200,100,${pulse})`;
+  ctx.font = '700 15px Orbitron';
+  ctx.fillText('TAP TO RETRY', W/2, H * 0.72);
+}
+
+// --- Game Loop ---
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+initGame();
+state = STATE.MENU;
+loop();
+</script>
+</body>
+</html>
